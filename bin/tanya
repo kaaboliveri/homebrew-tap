@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# tanya — minimal CLI that wraps the brain-server HTTP surface.
+#
+# Distributed via Homebrew. Reads server URL + bearer token from
+#   $TANYA_BASE_URL (or ~/.config/tanya/config first line)
+#   $TANYA_API_TOKEN
+# so operators don't need to memorise curl flags.
+#
+# Subcommands :
+#   tanya chat <prompt...>     — POST to /v1/chat/completions
+#   tanya health               — GET /healthz
+#   tanya version              — print CLI version
+#   tanya skills search <q>    — GET /v1/clawhub/search
+#   tanya synthesis            — POST stdin JSON to /v1/synthesis
+#
+# All commands honour `TANYA_BASE_URL` (default
+# http://localhost:3000) and `TANYA_API_TOKEN`.
+
+set -e
+
+CLI_VERSION="0.1.0"
+
+CONFIG_PATH="${TANYA_CONFIG:-$HOME/.config/tanya/config}"
+if [[ -z "${TANYA_BASE_URL:-}" && -f "$CONFIG_PATH" ]]; then
+  TANYA_BASE_URL="$(awk '/^base_url=/{print substr($0,10)}' "$CONFIG_PATH" | head -1)"
+fi
+if [[ -z "${TANYA_API_TOKEN:-}" && -f "$CONFIG_PATH" ]]; then
+  TANYA_API_TOKEN="$(awk '/^token=/{print substr($0,7)}' "$CONFIG_PATH" | head -1)"
+fi
+BASE="${TANYA_BASE_URL:-http://localhost:3000}"
+
+require_token() {
+  if [[ -z "${TANYA_API_TOKEN:-}" ]]; then
+    echo "tanya: TANYA_API_TOKEN is required (set in env or $CONFIG_PATH)." >&2
+    exit 2
+  fi
+}
+
+cmd_health() {
+  curl -fsS -H "Authorization: Bearer ${TANYA_API_TOKEN:-}" \
+    "$BASE/healthz" || { echo "tanya: health check failed"; exit 1; }
+  echo
+}
+
+cmd_chat() {
+  require_token
+  if [[ $# -lt 1 ]]; then
+    echo "usage: tanya chat <prompt...>" >&2
+    exit 2
+  fi
+  local prompt
+  prompt="$*"
+  curl -fsS -H "Authorization: Bearer $TANYA_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(printf '{"model":"default","messages":[{"role":"user","content":%s}]}' "$(printf '%s' "$prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
+    "$BASE/v1/chat/completions" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("choices",[{}])[0].get("message",{}).get("content","(empty)"))'
+}
+
+cmd_skills_search() {
+  require_token
+  local q="$*"
+  if [[ -z "$q" ]]; then
+    echo "usage: tanya skills search <query>" >&2
+    exit 2
+  fi
+  curl -fsS -H "Authorization: Bearer $TANYA_API_TOKEN" \
+    "$BASE/v1/clawhub/search?q=$(printf '%s' "$q" | python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip()))')&limit=10"
+  echo
+}
+
+cmd_synthesis() {
+  require_token
+  curl -fsS -H "Authorization: Bearer $TANYA_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @- \
+    "$BASE/v1/synthesis"
+  echo
+}
+
+cmd_version() {
+  echo "tanya $CLI_VERSION"
+}
+
+cmd_help() {
+  cat <<HELP
+tanya $CLI_VERSION — CLI for the Tanya brain-server.
+
+usage: tanya <command> [args...]
+
+commands :
+  chat <prompt...>      send a single-turn chat completion
+  health                hit /healthz
+  skills search <q>     proxy ClawHub skill search
+  synthesis             pipe JSON on stdin to /v1/synthesis
+  version               print CLI version
+  help                  show this help
+
+config :
+  TANYA_BASE_URL   default http://localhost:3000
+  TANYA_API_TOKEN  bearer token (required for most commands)
+  TANYA_CONFIG     path to config file (default ~/.config/tanya/config)
+
+config file format (one per line) :
+  base_url=https://tanya.example.com
+  token=<your bearer token>
+HELP
+}
+
+main() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    chat) cmd_chat "$@" ;;
+    health) cmd_health ;;
+    skills)
+      local sub2="${1:-}"
+      shift || true
+      case "$sub2" in
+        search) cmd_skills_search "$@" ;;
+        *) echo "tanya skills: unknown subcommand '$sub2'" >&2; exit 2 ;;
+      esac
+      ;;
+    synthesis) cmd_synthesis ;;
+    version|--version|-v) cmd_version ;;
+    help|--help|-h|"") cmd_help ;;
+    *) echo "tanya: unknown command '$sub' — run 'tanya help'" >&2; exit 2 ;;
+  esac
+}
+
+main "$@"
