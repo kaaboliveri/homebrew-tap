@@ -10,7 +10,7 @@ class Tanya < Formula
   desc "CLI for the Tanya brain-server (chat, skills, synthesis, health)"
   homepage "https://github.com/kaaboliveri/tanya-godlike-ai"
   url "https://github.com/kaaboliveri/homebrew-tap/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "REPLACE_WITH_SHA256_AT_RELEASE_TIME"
+  sha256 "68500fb0845791bab0db3c89f2cf68f9d37860c45f2176b0e7445441ed28b73c"
   license "MIT"
   version "0.1.0"
 
